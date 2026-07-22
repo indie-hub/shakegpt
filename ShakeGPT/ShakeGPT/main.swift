@@ -7,7 +7,7 @@
 
 
 let corpus = "banana banana banana"
-let model = BPE(trainOn: corpus, mergeCount: 4)
+let model = BPE(trainOn: corpus, maximumVocabularySize: 1_024)
 
 let toEncode = "hello"
 let encoded = model.encode(toEncode)
