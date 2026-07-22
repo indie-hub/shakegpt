@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		155E599C3010FEFD00E73D98 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 155E599B3010FEFD00E73D98 /* MLX */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXCopyFilesBuildPhase section */
 		155E598B300FA74300E73D98 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
@@ -35,6 +39,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				155E599C3010FEFD00E73D98 /* MLX in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -77,6 +82,7 @@
 			);
 			name = ShakeGPT;
 			packageProductDependencies = (
+				155E599B3010FEFD00E73D98 /* MLX */,
 			);
 			productName = ShakeGPT;
 			productReference = 155E598D300FA74300E73D98 /* ShakeGPT */;
@@ -106,6 +112,9 @@
 			);
 			mainGroup = 155E5984300FA74300E73D98;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				155E599A3010FEFD00E73D98 /* XCRemoteSwiftPackageReference "mlx-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 155E598E300FA74300E73D98 /* Products */;
 			projectDirPath = "";
@@ -295,6 +304,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		155E599A3010FEFD00E73D98 /* XCRemoteSwiftPackageReference "mlx-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.31.6;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		155E599B3010FEFD00E73D98 /* MLX */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 155E599A3010FEFD00E73D98 /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLX;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 155E5985300FA74300E73D98 /* Project object */;
 }

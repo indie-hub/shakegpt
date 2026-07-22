@@ -2,7 +2,7 @@
 //  BPE.swift
 //  ShakeGPT
 //
-//  Created by Bruno O on 22/07/2026.
+//  Created by Bruno O
 //
 /// A small byte-level Byte Pair Encoding (BPE) tokenizer.
 ///
@@ -136,6 +136,50 @@ private extension BPE {
             } else {
                 result.append(symbol)
             }
+        }
+    }
+}
+
+
+// MARK: - Debugging and inspection
+
+extension BPE {
+    /// Prints the IDs, raw bytes, and readable fragments produced for `text`.
+    func inspect(_ text: String) {
+        let ids = encode(text)
+
+        print("Input: \(text.debugDescription)")
+        print("Token count: \(ids.count)")
+
+        for id in ids {
+            let bytes = idToToken[id]
+            let text = String(decoding: bytes, as: UTF8.self)
+
+            print(
+                "ID \(id)",
+                "bytes \(bytes)",
+                "text \(text.debugDescription)"
+            )
+        }
+    }
+    /// Prints a deterministic slice of the vocabulary for training inspection.
+    /// The default skips the 256 single-byte tokens and starts with learned ones.
+    func inspectLearnedTokens(skip: Int = 256, limit: Int = 20) {
+        precondition(
+            skip >= 0 && skip <= idToToken.count,
+            "Skip must be between 0 and \(idToToken.count)"
+        )
+        precondition(limit > 0, "Limit must be positive")
+
+        for id in idToToken.indices.dropFirst(skip).prefix(limit) {
+            let token = idToToken[id]
+            let text = String(decoding: token, as: UTF8.self)
+
+            print(
+                "ID \(id)",
+                "bytes \(token)",
+                "text \(text.debugDescription)"
+            )
         }
     }
 }
