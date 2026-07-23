@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		155E599C3010FEFD00E73D98 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 155E599B3010FEFD00E73D98 /* MLX */; };
+		155E59A23011158A00E73D98 /* MLXNN in Frameworks */ = {isa = PBXBuildFile; productRef = 155E59A13011158A00E73D98 /* MLXNN */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -39,6 +40,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				155E59A23011158A00E73D98 /* MLXNN in Frameworks */,
 				155E599C3010FEFD00E73D98 /* MLX in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -50,6 +52,7 @@
 			isa = PBXGroup;
 			children = (
 				155E598F300FA74300E73D98 /* ShakeGPT */,
+				155E59A03011158A00E73D98 /* Frameworks */,
 				155E598E300FA74300E73D98 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -60,6 +63,13 @@
 				155E598D300FA74300E73D98 /* ShakeGPT */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		155E59A03011158A00E73D98 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -83,6 +93,7 @@
 			name = ShakeGPT;
 			packageProductDependencies = (
 				155E599B3010FEFD00E73D98 /* MLX */,
+				155E59A13011158A00E73D98 /* MLXNN */,
 			);
 			productName = ShakeGPT;
 			productReference = 155E598D300FA74300E73D98 /* ShakeGPT */;
@@ -321,6 +332,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 155E599A3010FEFD00E73D98 /* XCRemoteSwiftPackageReference "mlx-swift" */;
 			productName = MLX;
+		};
+		155E59A13011158A00E73D98 /* MLXNN */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 155E599A3010FEFD00E73D98 /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXNN;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

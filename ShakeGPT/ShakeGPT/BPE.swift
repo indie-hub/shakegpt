@@ -34,6 +34,10 @@ struct BPE {
     /// Looks up the byte token represented by an integer ID during decoding.
     private var idToToken: [Token] = []
 
+    var vocabularySize: Int {
+        idToToken.count
+    }
+
     /// Trains until the vocabulary reaches `maximumVocabularySize` or the
     /// current token stream contains no adjacent pair left to merge.
     init(trainOn text: String, maximumVocabularySize: Int) {
