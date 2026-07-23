@@ -19,18 +19,26 @@ import MLXNN
 ///
 /// Each `[B, C, D]` projection is split into `[B, H, C, headSize]`, where
 /// `D == H * headSize`. Every head then computes its own attention matrix.
-/// A future step will apply those weights to the values and join the heads.
-final class MultiHeadSelfAttention: Module {
-    @ModuleInfo var queryProjection: Linear
-    @ModuleInfo var keyProjection: Linear
-    @ModuleInfo var valueProjection: Linear
-    @ModuleInfo var dropout: Dropout
+/// The weights mix the value vectors before the heads are joined back into
+/// `[B, C, D]`.
+final class MultiHeadSelfAttention: Module, UnaryLayer {
+    @ModuleInfo private var queryProjection: Linear
+    @ModuleInfo private var keyProjection: Linear
+    @ModuleInfo private var valueProjection: Linear
+    @ModuleInfo private var outputProjection: Linear
 
     private let embeddingSize: Int
     private let headCount: Int
     private let headSize: Int
 
-    init(embeddingSize: Int, headCount: Int, dropoutProbability: Float = 0.1) {
+    private let dropout: Dropout
+
+    init(
+        embeddingSize: Int,
+        headCount: Int,
+        dropoutProbability: Float = 0.1,
+        qkvBias: Bool = false
+    ) {
         precondition(embeddingSize > 0, "Embedding size must be positive")
         precondition(headCount > 0, "Head count must be positive")
         precondition(
@@ -42,17 +50,19 @@ final class MultiHeadSelfAttention: Module {
         self.headCount = headCount
         self.headSize = embeddingSize / headCount
 
-        self._queryProjection.wrappedValue = Linear(embeddingSize, embeddingSize, bias: false)
-        self._keyProjection.wrappedValue = Linear(embeddingSize, embeddingSize, bias: false)
-        self._valueProjection.wrappedValue = Linear(embeddingSize, embeddingSize, bias: false)
-        self._dropout.wrappedValue = Dropout(p: dropoutProbability)
+        self._queryProjection.wrappedValue = Linear(embeddingSize, embeddingSize, bias: qkvBias)
+        self._keyProjection.wrappedValue = Linear(embeddingSize, embeddingSize, bias: qkvBias)
+        self._valueProjection.wrappedValue = Linear(embeddingSize, embeddingSize, bias: qkvBias)
+        self._outputProjection.wrappedValue = Linear(embeddingSize, embeddingSize, bias: false)
+
+        dropout = Dropout(p: dropoutProbability)
     }
 
     /// Projects the input into Q, K and V, then divides each into heads.
     ///
     /// Input shape: `[B, C, D]`
     /// Returned shapes: `[B, H, C, headSize]`
-    func projections(of input: MLXArray) -> (
+    private func projections(of input: MLXArray) -> (
         queries: MLXArray,
         keys: MLXArray,
         values: MLXArray
@@ -72,7 +82,7 @@ final class MultiHeadSelfAttention: Module {
     /// Transposing the keys from `[B, H, C, headSize]` to
     /// `[B, H, headSize, C]` makes matrix multiplication produce
     /// `[B, H, C, C]`: one attention matrix per batch item and head.
-    func scores(
+    private func scores(
         queries: MLXArray,
         keys: MLXArray
     ) -> MLXArray {
@@ -94,7 +104,7 @@ final class MultiHeadSelfAttention: Module {
     /// The `[C, C]` causal mask broadcasts across both batch and head dimensions.
     /// Softmax makes each row add up to one before dropout; dropout may change
     /// an individual row's sum during training while preserving it on average.
-    func weights(from scores: MLXArray) -> MLXArray {
+    private func weights(from scores: MLXArray) -> MLXArray {
         precondition(
             scores.shape.count == 4,
             "Expected scores shaped [batch, head, query, key]"
@@ -116,6 +126,48 @@ final class MultiHeadSelfAttention: Module {
         let weights = MLX.softmax(maskedScores, axis: -1)
 
         return dropout(weights)
+    }
+
+    func callAsFunction(_ input: MLXArray) -> MLXArray {
+        // Q, K and V: [B, H, C, headSize]
+        let projected = projections(of: input)
+
+        // Scores: [B, H, C, C]
+        let attentionScores = scores(
+            queries: projected.queries,
+            keys: projected.keys
+        )
+
+        // Masked, normalized and dropped-out weights: [B, H, C, C]
+        let attentionWeights = weights(
+            from: attentionScores
+        )
+
+        // Each head uses its weights to mix the value vectors.
+        // [B, H, C, C] × [B, H, C, headSize]
+        // becomes [B, H, C, headSize].
+        let context = attentionWeights.matmul(
+            projected.values
+        )
+
+        let batchSize = input.shape[0]
+        let contextLength = input.shape[1]
+
+        // Put context before heads:
+        // [B, H, C, headSize] → [B, C, H, headSize]
+        //
+        // Then join H × headSize back into D:
+        // [B, C, H, headSize] → [B, C, D]
+        let joinedHeads = context
+            .transposed(0, 2, 1, 3)
+            .reshaped([
+                batchSize,
+                contextLength,
+                embeddingSize
+            ])
+
+        // Allow the model to mix information produced by different heads.
+        return outputProjection(joinedHeads)
     }
 }
 

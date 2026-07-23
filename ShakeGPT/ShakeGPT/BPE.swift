@@ -34,6 +34,7 @@ struct BPE {
     /// Looks up the byte token represented by an integer ID during decoding.
     private var idToToken: [Token] = []
 
+    /// The number of byte and learned tokens actually available for encoding.
     var vocabularySize: Int {
         idToToken.count
     }
@@ -103,9 +104,9 @@ private extension BPE {
     }
 
     /// Counts how often each adjacent pair occurs in the current token stream.
-    func countPairs(in tokens: [Token]) -> [Pair:Int] {
+    func countPairs(in tokens: [Token]) -> [Pair: Int] {
         zip(tokens, tokens.dropFirst())
-            .reduce(into: [Pair:Int]()) { counts, neighbours in
+            .reduce(into: [Pair: Int]()) { counts, neighbours in
                 let pair = Pair(left: neighbours.0, right: neighbours.1)
 
                 counts[pair, default: 0] += 1
@@ -133,8 +134,8 @@ private extension BPE {
     }
 
     /// Replaces every non-overlapping occurrence of `pair` with one larger token.
-    func merge(_ pair: Pair, in word: [Token]) -> [Token] {
-        word.reduce(into: []) { result, symbol in
+    func merge(_ pair: Pair, in tokens: [Token]) -> [Token] {
+        tokens.reduce(into: []) { result, symbol in
             if result.last == pair.left, symbol == pair.right {
                 result[result.endIndex - 1] += symbol
             } else {
@@ -166,6 +167,7 @@ extension BPE {
             )
         }
     }
+
     /// Prints a deterministic slice of the vocabulary for training inspection.
     /// The default skips the 256 single-byte tokens and starts with learned ones.
     func inspectLearnedTokens(skip: Int = 256, limit: Int = 20) {
@@ -185,5 +187,19 @@ extension BPE {
                 "text \(text.debugDescription)"
             )
         }
+    }
+
+    /// Reports tokenizer compression for `text`.
+    ///
+    /// Empty text contains neither bytes nor tokens, so its ratio is defined as
+    /// zero rather than producing `NaN` from `0 / 0`.
+    func bytesPerToken(in text: String) -> Double {
+        let tokenCount = encode(text).count
+
+        guard tokenCount > 0 else {
+            return 0
+        }
+
+        return Double(text.utf8.count) / Double(tokenCount)
     }
 }

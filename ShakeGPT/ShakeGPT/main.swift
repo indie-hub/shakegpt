@@ -4,10 +4,29 @@
 //
 //  Created by Bruno O
 //
-
-
 import Foundation
-import MLX
+
+// Small values for quickly checking the complete forward and generation path.
+// Swap these with the active values below while developing on a small model.
+/*
+let contextLength: Int = 8
+let embeddingSize: Int = 64
+let headCount: Int = 4
+let layerCount: Int = 2
+let dropoutProbability: Float = 0.1
+let maximumVocabularySize: Int = 260
+*/
+
+// GPT-2 Small-style model dimensions. Shakespeare is much smaller than GPT-2's
+// training data, so these describe the architecture rather than a recommended
+// final training configuration.
+let contextLength: Int = 1_024
+let embeddingSize: Int = 768
+let headCount: Int = 12
+let layerCount: Int = 12
+let dropoutProbability: Float = 0.1
+let maximumVocabularySize: Int = 1_024
+
 
 guard CommandLine.arguments.count == 2 else {
     print("Usage \(CommandLine.arguments[0]) <filepath>")
@@ -27,75 +46,46 @@ do {
 
 
 // Learn a fixed byte-pair vocabulary from the training corpus.
-let model = timed("Vocabulary training") {
-    BPE(trainOn: corpus, maximumVocabularySize: 1_024)
+let tokeniser = timed("Vocabulary training") {
+    BPE(trainOn: corpus, maximumVocabularySize: maximumVocabularySize)
 }
 
-// Encode the same corpus into the token IDs used by the language model.
-let tokenIDs = model.encode(corpus)
-
-// Each sampled sequence contains eight tokens. The embedding size determines
-// how many learned coordinates represent each token.
-let contextLength = 8
-let embeddingSize = 64
-let headCount = 4
-
-// Sample four sequences and their one-token-shifted prediction targets.
-let batch = makeBatch(
-    from: tokenIDs,
+// The tokenizer determines the output vocabulary. Every other value controls
+// the geometry and regularisation of the transformer.
+let modelConfig = ShakeGPT.Config(
+    vocabularySize: tokeniser.vocabularySize,
     contextLength: contextLength,
-    batchSize: 4
-)
-
-print(batch.inputs)
-print(batch.targets)
-
-// Turn token IDs into `[batch, context, embedding]` vectors by adding the
-// learned token and positional embeddings.
-let embeddings = InputEmbeddings(
-    vocabularySize: model.vocabularySize,
-    maximumContextLength: contextLength,
-    embeddingSize: embeddingSize
-)
-
-let embeddedInputs = embeddings(batch.inputs)
-
-// Split the 64-dimensional representation across four parallel heads.
-// Each head therefore works with 16 dimensions.
-let attention = MultiHeadSelfAttention(
     embeddingSize: embeddingSize,
-    headCount: headCount
+    headCount: headCount,
+    layerCount: layerCount,
+    dropoutProbability: dropoutProbability,
+    qkvBias: false
 )
 
-// Q, K and V are learned views of the input, reshaped to
-// `[batch, head, context, headSize]`.
-let projected = attention.projections(
-    of: embeddedInputs
+let model = ShakeGPT(config: modelConfig)
+
+// Parameter storage counts the learned tensors only. Training additionally
+// needs memory for activations, gradients and optimizer state.
+let formatter = ByteCountFormatter()
+formatter.countStyle = .memory
+
+print("Trainable parameters:", model.parameterCount.formatted())
+print(
+    "Parameter storage:",
+    formatter.string(fromByteCount: Int64(model.parameterBytes))
 )
 
-print("Input:", embeddedInputs.shape)
-print("Queries:", projected.queries.shape)
-print("Keys:", projected.keys.shape)
-print("Values:", projected.values.shape)
+// Generation needs a batch dimension of one, but no sampled training batch or
+// shifted targets. The untrained model will still produce essentially random
+// text; this call only checks that the complete inference path works.
+let answer = timed("Generation") {
+    generate(
+        after: "To be, or ",
+        newTokenCount: 8,
+        using: model,
+        tokeniser: tokeniser,
+        contextLength: contextLength
+    )
+}
 
-// Every head independently produces a `[context, context]` score matrix.
-let scores = attention.scores(
-    queries: projected.queries,
-    keys: projected.keys
-)
-
-// Causal masking hides future tokens; softmax turns the allowed scores into
-// relative weights; dropout randomly removes some weights during training.
-let weights = attention.weights(from: scores)
-
-// Executable documentation for the shapes produced by multi-head attention.
-let batchSize = batch.inputs.shape[0]
-let headSize = embeddingSize / headCount
-
-assert(projected.queries.shape == [batchSize, headCount, contextLength, headSize])
-assert(projected.keys.shape == projected.queries.shape)
-assert(projected.values.shape == projected.queries.shape)
-assert(scores.shape == [batchSize, headCount, contextLength, contextLength])
-assert(weights.shape == scores.shape)
-
-print(weights)
+print("Answer:\n\(answer)\nDone.")
