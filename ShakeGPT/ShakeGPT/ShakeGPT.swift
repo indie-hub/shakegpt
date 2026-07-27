@@ -17,7 +17,7 @@ final class ShakeGPT: Module, UnaryLayer {
     ///
     /// `Codable` will later let the same configuration be saved beside trained
     /// weights and reconstructed for generation.
-    struct Config: Codable {
+    struct Config: Codable, Equatable {
         let vocabularySize: Int
         let contextLength: Int
         let embeddingSize: Int
@@ -26,6 +26,8 @@ final class ShakeGPT: Module, UnaryLayer {
         let dropoutProbability: Float
         let qkvBias: Bool
     }
+
+    let config: Config
 
     @ModuleInfo private var outputHead: Linear
 
@@ -48,6 +50,8 @@ final class ShakeGPT: Module, UnaryLayer {
             (0..<1).contains(config.dropoutProbability),
             "Dropout probability must be between zero and one"
         )
+
+        self.config = config
 
         embeddings = InputEmbeddings(
             vocabularySize: config.vocabularySize,

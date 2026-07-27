@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		155E599C3010FEFD00E73D98 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 155E599B3010FEFD00E73D98 /* MLX */; };
 		155E59A23011158A00E73D98 /* MLXNN in Frameworks */ = {isa = PBXBuildFile; productRef = 155E59A13011158A00E73D98 /* MLXNN */; };
+		155E59B83013609300E73D98 /* MLXOptimizers in Frameworks */ = {isa = PBXBuildFile; productRef = 155E59B73013609300E73D98 /* MLXOptimizers */; };
+		155E59BB30174B3B00E73D98 /* ArgumentParser in Frameworks */ = {isa = PBXBuildFile; productRef = 155E59BA30174B3B00E73D98 /* ArgumentParser */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -40,7 +42,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				155E59B83013609300E73D98 /* MLXOptimizers in Frameworks */,
 				155E59A23011158A00E73D98 /* MLXNN in Frameworks */,
+				155E59BB30174B3B00E73D98 /* ArgumentParser in Frameworks */,
 				155E599C3010FEFD00E73D98 /* MLX in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -94,6 +98,8 @@
 			packageProductDependencies = (
 				155E599B3010FEFD00E73D98 /* MLX */,
 				155E59A13011158A00E73D98 /* MLXNN */,
+				155E59B73013609300E73D98 /* MLXOptimizers */,
+				155E59BA30174B3B00E73D98 /* ArgumentParser */,
 			);
 			productName = ShakeGPT;
 			productReference = 155E598D300FA74300E73D98 /* ShakeGPT */;
@@ -125,6 +131,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				155E599A3010FEFD00E73D98 /* XCRemoteSwiftPackageReference "mlx-swift" */,
+				155E59B930174B3B00E73D98 /* XCRemoteSwiftPackageReference "swift-argument-parser" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 155E598E300FA74300E73D98 /* Products */;
@@ -325,6 +332,14 @@
 				minimumVersion = 0.31.6;
 			};
 		};
+		155E59B930174B3B00E73D98 /* XCRemoteSwiftPackageReference "swift-argument-parser" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-argument-parser.git";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 1.8.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -337,6 +352,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 155E599A3010FEFD00E73D98 /* XCRemoteSwiftPackageReference "mlx-swift" */;
 			productName = MLXNN;
+		};
+		155E59B73013609300E73D98 /* MLXOptimizers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 155E599A3010FEFD00E73D98 /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXOptimizers;
+		};
+		155E59BA30174B3B00E73D98 /* ArgumentParser */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 155E59B930174B3B00E73D98 /* XCRemoteSwiftPackageReference "swift-argument-parser" */;
+			productName = ArgumentParser;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
