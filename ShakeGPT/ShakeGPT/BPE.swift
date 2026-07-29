@@ -5,249 +5,233 @@
 //  Created by Bruno O
 //
 
+import CryptoKit
 import Foundation
 
 /// A small byte-level Byte Pair Encoding (BPE) tokenizer.
 ///
-/// BPE begins with one token for every UTF-8 byte in the training text. During
-/// training, it repeatedly finds the most common adjacent token pair and joins
-/// that pair into a larger token. The learned merges and vocabulary form the
-/// model: encoding new text means starting from its bytes, replaying the merges
-/// in order, and replacing the resulting tokens with their integer IDs.
+/// BPE begins with one token for every possible UTF-8 byte. During training it
+/// repeatedly finds the most common adjacent pair and joins that pair into a
+/// larger token. Encoding starts from bytes and replays those learned joins.
 ///
-/// Using bytes guarantees that every Swift `String` can be represented without
-/// needing an "unknown character" token.
+/// Configured special tokens are different: their spellings are recognized as
+/// indivisible markers and receive reserved IDs after the ordinary vocabulary.
+/// Starting from bytes means ordinary text never needs an "unknown" token.
 struct BPE: Codable {
-    /// A visible corpus marker that becomes one reserved token ID during encoding.
+    /// The historical document-boundary spelling used by existing vocabularies.
     static let endOfTextMarker = "<|endoftext|>"
 
-    /// One BPE token containing one or more UTF-8 bytes.
+    /// One ordinary BPE token containing one or more UTF-8 bytes.
     typealias Token = [UInt8]
 
-    /// Two adjacent tokens that may be joined during training or encoding.
+    /// Two adjacent ordinary tokens that may be joined.
     struct Pair: Hashable, Codable {
         let left: Token
         let right: Token
     }
 
-
-    /// Only the durable parts of the tokenizer belong in its JSON file.
-    ///
-    /// `tokenToId` is derived from `idToToken`, so loading can rebuild it rather
-    /// than storing the same relationship twice.
-    private enum CodingKeys: String, CodingKey {
-        case merges
-        case idToToken
+    /// A spelling requested by a run configuration, before it has an ID.
+    struct SpecialTokenDefinition: Codable, Equatable {
+        let name: String
+        let text: String
     }
 
-    /// Merge rules in the exact order in which they were learned.
+    /// A durable reserved token. IDs are part of the vocabulary format.
+    struct SpecialToken: Codable, Equatable {
+        let name: String
+        let text: String
+        let id: Int
+    }
+
+    /// Only durable values are stored. `tokenToId` is rebuilt while loading.
+    private enum CodingKeys: String, CodingKey {
+        case merges, idToToken, specialTokens
+    }
+
+    /// Merge rules stay in learning order because encoding replays that order.
     private var merges: [Pair] = []
 
-    /// Looks up the integer ID assigned to a byte token during encoding.
+    /// The two directions of the ordinary-token lookup table.
     private var tokenToId: [Token: Int] = [:]
-
-    /// Looks up the byte token represented by an integer ID during decoding.
     private var idToToken: [Token] = []
 
-    /// The number of byte and learned tokens actually available for encoding.
-    var vocabularySize: Int {
-        idToToken.count
-    }
+    /// Reserved tokens stay in declaration order, which also defines priority.
+    private(set) var specialTokens: [SpecialToken] = []
 
-    /// The first ID after the byte and learned BPE tokens marks a document boundary.
-    ///
-    /// This ID is never produced by ordinary text encoding. Callers insert it
-    /// explicitly when a complete document ends.
+    /// Number of byte and learned BPE tokens, excluding reserved tokens.
+    var vocabularySize: Int { idToToken.count }
+
+    /// Number of logits the model predicts, including reserved tokens.
+    var modelVocabularySize: Int { idToToken.count + specialTokens.count }
+
+    /// ID of the configured document-boundary token.
     var endOfTextTokenID: Int {
-        vocabularySize
+        specialTokens.first { $0.name == "endOfText" }!.id
     }
 
-    /// The transformer predicts every BPE token plus the end-of-text token.
-    var modelVocabularySize: Int {
-        vocabularySize + 1
-    }
+    /// Trains up to the total model vocabulary limit, reserving special slots.
+    init(
+        trainOn text: String,
+        maximumVocabularySize: Int,
+        specialTokens definitions: [SpecialTokenDefinition] = [
+            .init(name: "endOfText", text: Self.endOfTextMarker)
+        ]
+    ) {
+        precondition(maximumVocabularySize >= 256 + definitions.count)
+        precondition(Self.areValid(definitions))
 
-    /// Trains until the vocabulary reaches `maximumVocabularySize` or the
-    /// current token stream contains no adjacent pair left to merge.
-    init(trainOn text: String, maximumVocabularySize: Int) {
-        precondition(
-            maximumVocabularySize >= 256,
-            "Byte-level BPE requires all 256 byte tokens"
-        )
+        idToToken = (0..<256).map { [UInt8($0)] }
+        tokenToId = Dictionary(uniqueKeysWithValues: idToToken.enumerated().map { ($0.element, $0.offset) })
+        let ordinaryMaximum = maximumVocabularySize - definitions.count
+        var tokens = byteTokens(from: text)
 
-        idToToken = (0..<256).map { byte in [UInt8(byte)] }
-        tokenToId = Dictionary(
-            uniqueKeysWithValues: idToToken.enumerated().map {
-                id, token in (token, id)
-            }
-        )
-
-
-        var tokens: [Token] = byteTokens(from: text)
-
-        while idToToken.count < maximumVocabularySize {
-            updateLine("Token count: \(idToToken.count)/\(maximumVocabularySize)")
-            guard let winner = mostFrequentPair(in: tokens) else {
-                break
-            }
-
-            self.merges.append(winner)
+        while idToToken.count < ordinaryMaximum {
+            updateLine("Token count: \(idToToken.count)/\(ordinaryMaximum)")
+            guard let winner = mostFrequentPair(in: tokens) else { break }
+            merges.append(winner)
             tokens = merge(winner, in: tokens)
-
             let newToken = winner.left + winner.right
-
             if tokenToId[newToken] == nil {
                 tokenToId[newToken] = idToToken.count
                 idToToken.append(newToken)
             }
         }
+        specialTokens = definitions.enumerated().map {
+            .init(name: $0.element.name, text: $0.element.text, id: idToToken.count + $0.offset)
+        }
     }
 
-
-    /// Restores a saved vocabulary and rebuilds its reverse lookup table.
-    ///
-    /// The first 256 entries must still be the original byte tokens. This check
-    /// rejects damaged or incompatible vocabulary files before encoding begins.
+    /// Loads both the new format and historical vocabularies without rewriting.
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-
         merges = try container.decode([Pair].self, forKey: .merges)
         idToToken = try container.decode([Token].self, forKey: .idToToken)
-
-        let baseTokens: [Token] = (0..<256).map {
-            [UInt8($0)]
+        let baseTokens: [Token] = (0..<256).map { [UInt8($0)] }
+        guard idToToken.count >= 256, idToToken.starts(with: baseTokens), Set(idToToken).count == idToToken.count else {
+            throw DecodingError.dataCorruptedError(forKey: .idToToken, in: container, debugDescription: "Invalid BPE vocabulary.")
         }
-
-        guard
-            idToToken.count >= 256,
-            idToToken.starts(with: baseTokens),
-            Set(idToToken).count == idToToken.count
-        else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .idToToken,
-                in: container,
-                debugDescription: "Invalid BPE vocabulary."
-            )
+        specialTokens = try container.decodeIfPresent([SpecialToken].self, forKey: .specialTokens)
+            ?? [.init(name: "endOfText", text: Self.endOfTextMarker, id: idToToken.count)]
+        guard Self.areValid(specialTokens.map { .init(name: $0.name, text: $0.text) }),
+              specialTokens.enumerated().allSatisfy({ $0.element.id == idToToken.count + $0.offset }) else {
+            throw DecodingError.dataCorruptedError(forKey: .specialTokens, in: container, debugDescription: "Invalid BPE special tokens.")
         }
-
-        tokenToId = Dictionary(
-            uniqueKeysWithValues: idToToken.enumerated().map {
-                id, token in (token, id)
-            }
-        )
+        tokenToId = Dictionary(uniqueKeysWithValues: idToToken.enumerated().map { ($0.element, $0.offset) })
     }
 
-    /// Saves the learned merge order and ID-to-token vocabulary through `Codable`.
+    /// Persists the learned merges, ordinary tokens, and resolved special IDs.
     func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-
         try container.encode(merges, forKey: .merges)
         try container.encode(idToToken, forKey: .idToToken)
+        try container.encode(specialTokens, forKey: .specialTokens)
     }
 
-    /// Encodes new text by converting it to bytes and replaying learned merges.
-    func encode(_ text: String) -> [Int] {
-        let tokens = self.merges.reduce(byteTokens(from: text)) { tokens, pair in
-            merge(pair, in: tokens)
-        }
-
-        return tokens.map { token in
-            tokenToId[token]!
-        }
-    }
-    /// Encodes corpus text while turning every visible boundary marker into EOT.
+    /// Encodes ordinary text with learned merges and special spellings atomically.
     ///
-    /// Ordinary text is encoded section by section so the marker's characters
-    /// never enter the model as thirteen unrelated byte tokens.
-    func encodeWithSpecialMarkers(_ text: String) -> [Int] {
-        let sections = text.components(separatedBy: Self.endOfTextMarker)
-
-        return sections.enumerated().flatMap { index, section in
-            var tokens = encode(section)
-
-            if index < sections.count - 1 {
-                tokens.append(endOfTextTokenID)
+    /// Reserved spellings are checked in declaration order at each position, so
+    /// the first definition wins when two spellings overlap.
+    func encode(_ text: String) -> [Int] {
+        var result: [Int] = []
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            if let token = specialTokens.first(where: { text[cursor...].hasPrefix($0.text) }) {
+                result.append(token.id)
+                cursor = text.index(cursor, offsetBy: token.text.count)
+                continue
             }
-
-            return tokens
+            let next = specialTokens.compactMap { text[cursor...].range(of: $0.text)?.lowerBound }.min() ?? text.endIndex
+            result += encodeOrdinary(String(text[cursor..<next]))
+            cursor = next
         }
+        return result
     }
 
-    /// Reconstructs text by resolving token IDs and joining their UTF-8 bytes.
+    /// Kept for source compatibility; all configured special tokens are now atomic.
+    func encodeWithSpecialMarkers(_ text: String) -> [Int] { encode(text) }
+
+    /// Reconstructs text from ordinary byte tokens and reserved spellings.
     func decode(_ ids: [Int]) -> String {
-        let bytes = ids.flatMap { id -> Token in
+        let bytes = ids.flatMap { id -> [UInt8] in
+            if let special = specialTokens.first(where: { $0.id == id }) {
+                return Array(special.text.utf8)
+            }
             precondition(idToToken.indices.contains(id), "Unknown token ID: \(id)")
             return idToToken[id]
         }
 
-        return String(decoding: bytes, as: Unicode.UTF8.self)
+        // A Unicode character may span several byte tokens. Decode only after
+        // reassembling the complete byte stream so those bytes stay together.
+        return String(decoding: bytes, as: UTF8.self)
     }
-}
 
-// MARK: - Persistence
+    /// Stable tokenizer identity used to bind new checkpoints to token meanings.
+    var identityDigest: String {
+        struct Identity: Codable {
+            let merges: [Pair]
+            let idToToken: [Token]
+            let specialTokens: [SpecialToken]
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try! encoder.encode(Identity(merges: merges, idToToken: idToToken, specialTokens: specialTokens))
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
 
-extension BPE {
-    /// Atomically writes the vocabulary so an interrupted save cannot corrupt it.
+    /// Atomically saves the tokenizer so interruption cannot corrupt the file.
     func save(to url: URL) throws {
         let data = try JSONEncoder().encode(self)
         try data.write(to: url, options: .atomic)
     }
 
-    /// Loads the merge rules and token IDs previously written by `save(to:)`.
     static func load(from url: URL) throws -> BPE {
-        let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode(BPE.self, from: data)
-    }
-}
-
-private extension BPE {
-    /// Converts text into the initial stream: one token per UTF-8 byte.
-    func byteTokens(from text: String) -> [Token] {
-        text.utf8.map { byte in [byte] }
+        try JSONDecoder().decode(BPE.self, from: Data(contentsOf: url))
     }
 
-    /// Selects the most frequent pair, keeping the first occurrence on a tie.
-    func mostFrequentPair(in tokens: [Token]) -> Pair? {
+    /// Applies learned merges only to ordinary text between special markers.
+    private func encodeOrdinary(_ text: String) -> [Int] {
+        merges.reduce(byteTokens(from: text)) { merge($1, in: $0) }.map { tokenToId[$0]! }
+    }
+
+    /// Creates the initial stream: one token for every UTF-8 byte.
+    private func byteTokens(from text: String) -> [Token] { text.utf8.map { [$0] } }
+
+    /// Selects the most common pair, keeping first-seen order for ties.
+    private func mostFrequentPair(in tokens: [Token]) -> Pair? {
         var counts: [Pair: Int] = [:]
-        var firstSeen: [Pair] = []
-
+        var order: [Pair] = []
         for (left, right) in zip(tokens, tokens.dropFirst()) {
             let pair = Pair(left: left, right: right)
-
-            if counts[pair] == nil {
-                firstSeen.append(pair)
-            }
-
+            if counts[pair] == nil { order.append(pair) }
             counts[pair, default: 0] += 1
         }
-
         var winner: Pair?
-        var winningCount: Int = 0
-
-        for pair in firstSeen {
+        var winningCount = 0
+        for pair in order {
             let count = counts[pair, default: 0]
-
             if count > winningCount {
                 winner = pair
                 winningCount = count
             }
         }
-
         return winner
     }
 
-    /// Replaces every non-overlapping occurrence of `pair` with one larger token.
-    func merge(_ pair: Pair, in tokens: [Token]) -> [Token] {
+    /// Replaces every non-overlapping occurrence with one larger token.
+    private func merge(_ pair: Pair, in tokens: [Token]) -> [Token] {
         tokens.reduce(into: []) { result, symbol in
-            if result.last == pair.left, symbol == pair.right {
-                result[result.endIndex - 1] += symbol
-            } else {
-                result.append(symbol)
-            }
+            if result.last == pair.left, symbol == pair.right { result[result.endIndex - 1] += symbol }
+            else { result.append(symbol) }
         }
     }
-}
 
+    private static func areValid(_ tokens: [SpecialTokenDefinition]) -> Bool {
+        !tokens.isEmpty && tokens.filter { $0.name == "endOfText" }.count == 1
+            && Set(tokens.map(\.name)).count == tokens.count
+            && Set(tokens.map(\.text)).count == tokens.count
+            && tokens.allSatisfy { !$0.name.isEmpty && !$0.text.isEmpty }
+    }
+}
 
 // MARK: - Debugging and inspection
 
@@ -255,24 +239,25 @@ extension BPE {
     /// Prints the IDs, raw bytes, and readable fragments produced for `text`.
     func inspect(_ text: String) {
         let ids = encode(text)
-
         print("Input: \(text.debugDescription)")
         print("Token count: \(ids.count)")
 
         for id in ids {
-            let bytes = idToToken[id]
-            let text = String(decoding: bytes, as: UTF8.self)
-
+            let bytes: [UInt8]
+            if let special = specialTokens.first(where: { $0.id == id }) {
+                bytes = Array(special.text.utf8)
+            } else {
+                bytes = idToToken[id]
+            }
             print(
                 "ID \(id)",
                 "bytes \(bytes)",
-                "text \(text.debugDescription)"
+                "text \(String(decoding: bytes, as: UTF8.self).debugDescription)"
             )
         }
     }
 
-    /// Prints a deterministic slice of the vocabulary for training inspection.
-    /// The default skips the 256 single-byte tokens and starts with learned ones.
+    /// Prints a deterministic slice of learned ordinary vocabulary tokens.
     func inspectLearnedTokens(skip: Int = 256, limit: Int = 20) {
         precondition(
             skip >= 0 && skip <= idToToken.count,
@@ -282,27 +267,18 @@ extension BPE {
 
         for id in idToToken.indices.dropFirst(skip).prefix(limit) {
             let token = idToToken[id]
-            let text = String(decoding: token, as: UTF8.self)
-
             print(
                 "ID \(id)",
                 "bytes \(token)",
-                "text \(text.debugDescription)"
+                "text \(String(decoding: token, as: UTF8.self).debugDescription)"
             )
         }
     }
 
-    /// Reports tokenizer compression for `text`.
-    ///
-    /// Empty text contains neither bytes nor tokens, so its ratio is defined as
-    /// zero rather than producing `NaN` from `0 / 0`.
+    /// Reports how many UTF-8 bytes each encoded token represents on average.
     func bytesPerToken(in text: String) -> Double {
         let tokenCount = encode(text).count
-
-        guard tokenCount > 0 else {
-            return 0
-        }
-
+        guard tokenCount > 0 else { return 0 }
         return Double(text.utf8.count) / Double(tokenCount)
     }
 }

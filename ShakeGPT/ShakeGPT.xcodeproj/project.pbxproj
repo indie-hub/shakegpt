@@ -11,6 +11,10 @@
 		155E59A23011158A00E73D98 /* MLXNN in Frameworks */ = {isa = PBXBuildFile; productRef = 155E59A13011158A00E73D98 /* MLXNN */; };
 		155E59B83013609300E73D98 /* MLXOptimizers in Frameworks */ = {isa = PBXBuildFile; productRef = 155E59B73013609300E73D98 /* MLXOptimizers */; };
 		155E59BB30174B3B00E73D98 /* ArgumentParser in Frameworks */ = {isa = PBXBuildFile; productRef = 155E59BA30174B3B00E73D98 /* ArgumentParser */; };
+		A10000000000000000000010 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 155E599B3010FEFD00E73D98 /* MLX */; };
+		A10000000000000000000011 /* MLXNN in Frameworks */ = {isa = PBXBuildFile; productRef = 155E59A13011158A00E73D98 /* MLXNN */; };
+		A10000000000000000000012 /* MLXOptimizers in Frameworks */ = {isa = PBXBuildFile; productRef = 155E59B73013609300E73D98 /* MLXOptimizers */; };
+		A10000000000000000000013 /* ArgumentParser in Frameworks */ = {isa = PBXBuildFile; productRef = 155E59BA30174B3B00E73D98 /* ArgumentParser */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -27,12 +31,31 @@
 
 /* Begin PBXFileReference section */
 		155E598D300FA74300E73D98 /* ShakeGPT */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ShakeGPT; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000001 /* ShakeGPTTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ShakeGPTTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A10000000000000000000009 /* Exceptions for "ShakeGPT" folder in "ShakeGPTTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				main.swift,
+			);
+			target = A10000000000000000000003 /* ShakeGPTTests */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		155E598F300FA74300E73D98 /* ShakeGPT */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A10000000000000000000009 /* Exceptions for "ShakeGPT" folder in "ShakeGPTTests" target */,
+			);
 			path = ShakeGPT;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000002 /* ShakeGPTTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ShakeGPTTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -49,6 +72,17 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000012 /* MLXOptimizers in Frameworks */,
+				A10000000000000000000011 /* MLXNN in Frameworks */,
+				A10000000000000000000013 /* ArgumentParser in Frameworks */,
+				A10000000000000000000010 /* MLX in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -56,6 +90,7 @@
 			isa = PBXGroup;
 			children = (
 				155E598F300FA74300E73D98 /* ShakeGPT */,
+				A10000000000000000000002 /* ShakeGPTTests */,
 				155E59A03011158A00E73D98 /* Frameworks */,
 				155E598E300FA74300E73D98 /* Products */,
 			);
@@ -65,6 +100,7 @@
 			isa = PBXGroup;
 			children = (
 				155E598D300FA74300E73D98 /* ShakeGPT */,
+				A10000000000000000000001 /* ShakeGPTTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -105,6 +141,32 @@
 			productReference = 155E598D300FA74300E73D98 /* ShakeGPT */;
 			productType = "com.apple.product-type.tool";
 		};
+		A10000000000000000000003 /* ShakeGPTTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000008 /* Build configuration list for PBXNativeTarget "ShakeGPTTests" */;
+			buildPhases = (
+				A10000000000000000000004 /* Sources */,
+				A10000000000000000000005 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				155E598F300FA74300E73D98 /* ShakeGPT */,
+				A10000000000000000000002 /* ShakeGPTTests */,
+			);
+			name = ShakeGPTTests;
+			packageProductDependencies = (
+				155E599B3010FEFD00E73D98 /* MLX */,
+				155E59A13011158A00E73D98 /* MLXNN */,
+				155E59B73013609300E73D98 /* MLXOptimizers */,
+				155E59BA30174B3B00E73D98 /* ArgumentParser */,
+			);
+			productName = ShakeGPTTests;
+			productReference = A10000000000000000000001 /* ShakeGPTTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -116,6 +178,9 @@
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					155E598C300FA74300E73D98 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					A10000000000000000000003 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -139,12 +204,20 @@
 			projectRoot = "";
 			targets = (
 				155E598C300FA74300E73D98 /* ShakeGPT */,
+				A10000000000000000000003 /* ShakeGPTTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
 		155E5989300FA74300E73D98 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000004 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -300,6 +373,36 @@
 			};
 			name = Release;
 		};
+		A10000000000000000000006 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Q3AX3QLN67;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bruno.ShakeGPTTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A10000000000000000000007 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Q3AX3QLN67;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bruno.ShakeGPTTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -317,6 +420,15 @@
 			buildConfigurations = (
 				155E5995300FA74300E73D98 /* Debug */,
 				155E5996300FA74300E73D98 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000008 /* Build configuration list for PBXNativeTarget "ShakeGPTTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000006 /* Debug */,
+				A10000000000000000000007 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

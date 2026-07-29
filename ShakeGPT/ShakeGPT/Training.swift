@@ -15,6 +15,9 @@ import MLXOptimizers
 enum CheckpointError: LocalizedError {
     case missingMetadata
     case incompatibleConfiguration
+    case missingSidecar
+    case incompatibleIdentity
+    case unsupportedFormat(String)
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +25,12 @@ enum CheckpointError: LocalizedError {
             "The checkpoint is missing its training metadata."
         case .incompatibleConfiguration:
             "The checkpoint was created for a different model configuration."
+        case .missingSidecar:
+            "The checkpoint requires a readable resolved configuration sidecar."
+        case .incompatibleIdentity:
+            "The checkpoint was created for a different tokenizer or model identity."
+        case .unsupportedFormat(let version):
+            "Unsupported checkpoint configuration format \(version); expected 1."
         }
     }
 }
@@ -33,16 +42,22 @@ enum CheckpointError: LocalizedError {
 func saveCheckpoint(
     model: ShakeGPT,
     validationLoss: Float,
-    to url: URL
+    to url: URL,
+    configuration: ResolvedRunConfiguration
 ) throws {
     let parameters = Dictionary(
         uniqueKeysWithValues: model.parameters().flattened()
     )
     let encodedConfig = try JSONEncoder().encode(model.config)
-    let metadata = [
+    var metadata = [
         "config": String(decoding: encodedConfig, as: UTF8.self),
         "validationLoss": String(validationLoss)
     ]
+    metadata["resolvedConfigurationFormat"] = "1"
+    metadata["compatibilityIdentity"] = configuration.compatibilityIdentity
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let sidecar = try encoder.encode(configuration)
 
     let checkpoint = try saveToData(
         arrays: parameters,
@@ -52,6 +67,12 @@ func saveCheckpoint(
     try FileManager.default.createDirectory(
         at: url.deletingLastPathComponent(),
         withIntermediateDirectories: true
+    )
+    // Publish the sidecar first. The checkpoint is the commit point: once it
+    // advertises versioned configuration, the matching sidecar already exists.
+    try sidecar.write(
+        to: ResolvedRunConfiguration.checkpointSidecarURL(for: url),
+        options: .atomic
     )
     try checkpoint.write(to: url, options: .atomic)
 }
@@ -63,7 +84,8 @@ func saveCheckpoint(
 @discardableResult
 func loadCheckpoint(
     into model: ShakeGPT,
-    from url: URL
+    from url: URL,
+    configuration: ResolvedRunConfiguration? = nil
 ) throws -> Float {
     let (arrays, metadata) = try loadArraysAndMetadata(
         url: url,
@@ -86,6 +108,27 @@ func loadCheckpoint(
 
     guard savedConfig == model.config else {
         throw CheckpointError.incompatibleConfiguration
+    }
+
+    if let format = metadata["resolvedConfigurationFormat"] {
+        guard format == "1" else {
+            throw CheckpointError.unsupportedFormat(format)
+        }
+        guard let configuration,
+              let savedIdentity = metadata["compatibilityIdentity"],
+              let sidecarData = try? Data(contentsOf: ResolvedRunConfiguration.checkpointSidecarURL(for: url)),
+              let sidecar = try? JSONDecoder().decode(ResolvedRunConfiguration.self, from: sidecarData) else {
+            throw CheckpointError.missingSidecar
+        }
+        guard sidecar.formatVersion == 1 else {
+            throw CheckpointError.unsupportedFormat(String(sidecar.formatVersion))
+        }
+        guard savedIdentity == configuration.compatibilityIdentity,
+              sidecar.compatibilityIdentity == savedIdentity,
+              sidecar.model == model.config,
+              sidecar.tokenizerIdentity == configuration.tokenizerIdentity else {
+            throw CheckpointError.incompatibleIdentity
+        }
     }
 
     let parameters = ModuleParameters.unflattened(arrays)
@@ -213,7 +256,9 @@ func train(
     minimumImprovement: Float = 0.005,
     validationBatchCount: Int = 20,
     checkpointURL: URL? = nil,
-    isContinuation: Bool = false
+    isContinuation: Bool = false,
+    learningRate: Float = 0.0003,
+    configuration: ResolvedRunConfiguration
 ) throws {
     precondition(epochs > 0, "Number of epochs must be positive")
     precondition(
@@ -225,6 +270,7 @@ func train(
     precondition(patience > 0, "Patience must be positive")
     precondition(minimumImprovement >= 0, "Minimum improvement cannot be negative")
     precondition(validationBatchCount > 0, "Validation batch count must be positive")
+    precondition(learningRate > 0, "Learning rate must be positive")
 
     var trainingTokens: [Int] = []
     var validationTokens: [Int] = []
@@ -267,7 +313,7 @@ func train(
     print("Total training steps:", totalSteps)
 
     // AdamW decides how the gradients change each parameter.
-    let optimiser = AdamW(learningRate: 0.0003, weightDecay: 0.1)
+    let optimiser = AdamW(learningRate: learningRate, weightDecay: 0.1)
 
     // Automatic differentiation gives us both the loss and its gradients.
     let lossAndGrad = valueAndGrad(model: model, loss)
@@ -355,7 +401,8 @@ func train(
                     try saveCheckpoint(
                         model: model,
                         validationLoss: validationLoss,
-                        to: checkpointURL
+                        to: checkpointURL,
+                        configuration: configuration
                     )
                 }
             } else {

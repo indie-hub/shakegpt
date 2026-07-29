@@ -2,255 +2,189 @@
 //  main.swift
 //  ShakeGPT
 //
-//  Created by Bruno O
-//
-import Foundation
+
 import ArgumentParser
+import Foundation
 import MLX
 
-/// Command-line inputs keep local corpus and checkpoint paths out of the source.
-struct Options: ParsableArguments {
-    @Option(
-        help: "UTF-8 training corpus",
-        transform: URL.init(fileURLWithPath:)
-    )
-    var corpus: URL
-
-    @Option(
-        help: "Optional UTF-8 validation corpus",
-        transform: URL.init(fileURLWithPath:)
-    )
-    var validation: URL?
-
-    @Option(
-        help: "Saved BPE vocabulary, created when it does not exist",
-        transform: URL.init(fileURLWithPath:)
-    )
-    var vocabulary: URL
-
-    @Flag(help: "Train a new model instead of only generating text")
-    var train: Bool = false
-
-    @Flag(help: "Load the best checkpoint before continuing training")
-    var resume: Bool = false
-
-    @Argument(
-        help: "Prompt whose text the model should continue"
-    )
-    var question: String
-}
-
-let options = Options.parseOrExit()
-
-// A compact GPT-style configuration for the much smaller Shakespeare corpus.
-// `embeddingSize` must be divisible by `headCount`, giving every attention head
-// an equally sized portion of the embedding.
-let contextLength: Int = 256
-let embeddingSize: Int = 384
-let headCount: Int = 6
-let layerCount: Int = 6
-let dropoutProbability: Float = 0.2
-let maximumVocabularySize: Int = 4_096
-let batchSize: Int = 8
-let epochCount: Int = 10
-
-let shouldLoadCheckpoint = options.resume || !options.train
-
-let device = Device.defaultDevice()
-
-print("MLX device:", device)
-print("Using GPU:", device.deviceType == .gpu)
-
-let corpusURL = options.corpus
-let vocabularyURL = options.vocabulary
-
-// Each vocabulary gets a matching checkpoint beside it. A new vocabulary path
-// therefore starts a clean experiment without overwriting an older model.
-let checkpointName = vocabularyURL.deletingPathExtension().lastPathComponent
-    + "-best.safetensors"
-let checkpointURL = vocabularyURL
-    .deletingLastPathComponent()
-    .appendingPathComponent(checkpointName)
-
-let corpus: String
-
-do {
-    corpus = try String(contentsOf: corpusURL, encoding: .utf8)
-} catch {
-    print("Could not read contents of \(corpusURL.path): \(error)")
+/// Ends a command-line run with a readable error instead of a crash backtrace.
+func fail(_ message: String) -> Never {
+    FileHandle.standardError.write(Data("Error: \(message)\n".utf8))
     exit(EXIT_FAILURE)
 }
 
-// Learn a fixed byte-pair vocabulary from the training corpus.
+/// CLI values are intentionally optional: JSON fills what the command line omits.
+struct Options: ParsableArguments {
+    @Option(help: "Version-1 JSON run configuration", transform: URL.init(fileURLWithPath:))
+    var config: URL?
+    @Option(help: "UTF-8 training corpus", transform: URL.init(fileURLWithPath:))
+    var corpus: URL?
+    @Option(help: "Optional UTF-8 validation corpus", transform: URL.init(fileURLWithPath:))
+    var validation: URL?
+    @Option(help: "Saved BPE vocabulary", transform: URL.init(fileURLWithPath:))
+    var vocabulary: URL?
+    @Option(help: "UTF-8 text used only to create BPE; repeat to combine corpora", transform: URL.init(fileURLWithPath:))
+    var vocabularyCorpus: [URL] = []
+    @Option(help: "Checkpoint to save or load", transform: URL.init(fileURLWithPath:))
+    var checkpoint: URL?
+    @Option(help: "Checkpoint to load before training", transform: URL.init(fileURLWithPath:))
+    var resumeFrom: URL?
+    @Flag(help: "Train a new model instead of only generating text") var train = false
+    @Flag(help: "Load the best checkpoint before continuing training") var resume = false
+    @Option(help: "AdamW learning rate") var learningRate: Float?
+    @Option(help: "Sampling temperature; zero is greedy") var temperature: Float?
+    @Option(help: "Highest-scoring tokens considered during sampling") var topK: Int?
+    @Option(help: "Smallest likely-token probability mass") var topP: Float?
+    @Option(help: "Penalty applied to recently used tokens; one disables it")
+    var repetitionPenalty: Float?
+    @Argument(help: "Prompt whose text the model should continue") var question: String
+
+    mutating func validate() throws {
+        if resume && resumeFrom != nil {
+            throw ValidationError("Use either --resume or --resume-from, not both")
+        }
+    }
+
+    var overrides: RunOverrides {
+        .init(corpus: corpus, validation: validation, vocabulary: vocabulary,
+              vocabularyCorpora: vocabularyCorpus, checkpoint: checkpoint,
+              resumeFrom: resumeFrom, maximumModelVocabularySize: nil,
+              contextLength: nil, embeddingSize: nil, headCount: nil, layerCount: nil,
+              dropoutProbability: nil, qkvBias: nil, batchSize: nil, epochs: nil,
+              learningRate: learningRate, evalCadence: nil, patience: nil,
+              newTokenCount: nil, temperature: temperature, topK: topK, topP: topP,
+              repetitionPenalty: repetitionPenalty)
+    }
+}
+
+let options = Options.parseOrExit()
+let preliminary: ResolvedRunConfiguration
+do {
+    preliminary = try ResolvedRunConfiguration.resolve(
+        configurationURL: options.config, overrides: options.overrides, isTraining: options.train
+    )
+} catch {
+    fail("Invalid run configuration: \(error.localizedDescription)")
+}
+
+let device = Device.defaultDevice()
+print("MLX device:", device)
+print("Using GPU:", device.deviceType == .gpu)
+
+let vocabularyURL = URL(fileURLWithPath: preliminary.data.vocabulary)
+let corpusURL = preliminary.data.corpus.map(URL.init(fileURLWithPath:))
+let checkpointURL = URL(fileURLWithPath: preliminary.data.checkpoint)
+
+// `resumeFrom` is an input used only when continuing training, while
+// `checkpoint` is the best model this run saves and ordinary generation loads.
+// `--resume` is shorthand for continuing from that same best checkpoint.
+let checkpointToLoad: URL?
+if options.train, let resume = preliminary.data.resumeFrom { checkpointToLoad = URL(fileURLWithPath: resume) }
+else if options.resume || !options.train { checkpointToLoad = checkpointURL }
+else { checkpointToLoad = nil }
+let isContinuation = options.train && checkpointToLoad != nil
+
+let corpus: String?
+if let corpusURL {
+    do { corpus = try String(contentsOf: corpusURL, encoding: .utf8) }
+    catch { fail("Could not read \(corpusURL.path): \(error.localizedDescription)") }
+} else { corpus = nil }
+
 let tokeniser = timed("Vocabulary training") {
     if FileManager.default.fileExists(atPath: vocabularyURL.path) {
         do {
             print("Loading vocabulary from \(vocabularyURL.path)")
             return try BPE.load(from: vocabularyURL)
-        } catch {
-            fatalError(
-                "Failed to load vocabulary from "
-                    + "\(vocabularyURL.path): \(error)"
-            )
+        } catch { fail("Failed to load vocabulary from \(vocabularyURL.path): \(error.localizedDescription)") }
+    }
+    let vocabularyTrainingCorpus: String
+    if preliminary.data.vocabularyCorpora.isEmpty {
+        guard let corpus else {
+            fail("Vocabulary does not exist at \(vocabularyURL.path). Supply --vocabulary-corpus or create it during training.")
         }
+        vocabularyTrainingCorpus = corpus
+    } else {
+        do {
+            vocabularyTrainingCorpus = try preliminary.data.vocabularyCorpora.map {
+                try String(contentsOf: URL(fileURLWithPath: $0), encoding: .utf8)
+            }.joined(separator: "\n\n")
+        } catch { fail("Could not read vocabulary corpus: \(error.localizedDescription)") }
     }
-
-    print("Training a new vocabulary.")
-
-    // EOT is a reserved model token rather than ordinary training text. Replacing
-    // its visible spelling prevents BPE from learning pieces of the marker.
-    let corpusWithoutMarkers = corpus.replacingOccurrences(
-        of: BPE.endOfTextMarker,
-        with: "\n\n"
+    let tokenizer = BPE(
+        trainOn: vocabularyTrainingCorpus,
+        maximumVocabularySize: preliminary.tokenizer.maximumModelVocabularySize,
+        specialTokens: preliminary.tokenizer.specialTokens.map { .init(name: $0.name, text: $0.text) }
     )
-
-    let tokeniser = BPE(
-        trainOn: corpusWithoutMarkers,
-        maximumVocabularySize: maximumVocabularySize
-    )
-
-    do {
-        try tokeniser.save(to: vocabularyURL)
-    } catch {
-        fatalError(
-            "Failed to save vocabulary to "
-                + "\(vocabularyURL.path): \(error)"
-        )
-    }
-
-    return tokeniser
+    do { try tokenizer.save(to: vocabularyURL) }
+    catch { fail("Failed to save vocabulary to \(vocabularyURL.path): \(error.localizedDescription)") }
+    return tokenizer
 }
 
-// Uniform random guessing assigns probability 1 / vocabularySize to the answer,
-// so its expected cross-entropy is the natural logarithm of the vocabulary size.
-let randomBaselineLoss = log(
-    Double(tokeniser.modelVocabularySize)
-)
-
-print(
-    "Random baseline loss: ",
-    randomBaselineLoss
-)
-
-// The tokenizer determines the output vocabulary. Every other value controls
-// the geometry and regularisation of the transformer.
-let modelConfig = ShakeGPT.Config(
-    vocabularySize: tokeniser.modelVocabularySize,
-    contextLength: contextLength,
-    embeddingSize: embeddingSize,
-    headCount: headCount,
-    layerCount: layerCount,
-    dropoutProbability: dropoutProbability,
-    qkvBias: false
-)
-
-let model = ShakeGPT(config: modelConfig)
-
-// Generation and resumed training need learned parameters. Fresh training starts
-// from the model's random initial values instead.
-if shouldLoadCheckpoint {
-    guard FileManager.default.fileExists(atPath: checkpointURL.path) else {
-        fatalError("No checkpoint exists at \(checkpointURL.path)")
-    }
-
-    do {
-        let validationLoss = try loadCheckpoint(
-            into: model,
-            from: checkpointURL
-        )
-        print(
-            "Continuing from checkpoint with validation loss",
-            "\(validationLoss)."
-        )
-        print("AdamW starts with fresh optimizer state.")
-    } catch {
-        fatalError(
-            "Failed to load checkpoint from \(checkpointURL.path): \(error)"
-        )
-    }
+let requestedSpecialTokens = preliminary.tokenizer.specialTokens.map {
+    BPE.SpecialTokenDefinition(name: $0.name, text: $0.text)
+}
+let loadedSpecialTokens = tokeniser.specialTokens.map {
+    BPE.SpecialTokenDefinition(name: $0.name, text: $0.text)
+}
+guard requestedSpecialTokens == loadedSpecialTokens else {
+    fail("The configured special tokens do not match the saved vocabulary.")
 }
 
-// Parameter storage counts the learned tensors only. Training additionally
-// needs memory for activations, gradients and optimizer state.
+let resolved: ResolvedRunConfiguration
+do {
+    resolved = try ResolvedRunConfiguration.resolve(
+        configurationURL: options.config, overrides: options.overrides,
+        isTraining: options.train, tokenizer: tokeniser
+    )
+} catch { fail("Invalid run configuration: \(error.localizedDescription)") }
+
+let model = ShakeGPT(config: resolved.model)
+print("Random baseline loss:", log(Double(tokeniser.modelVocabularySize)))
+
+if let checkpointToLoad {
+    guard FileManager.default.fileExists(atPath: checkpointToLoad.path) else {
+        fail("No checkpoint exists at \(checkpointToLoad.path)")
+    }
+    do {
+        let validationLoss = try loadCheckpoint(into: model, from: checkpointToLoad, configuration: resolved)
+        print(isContinuation ? "Continuing from checkpoint with validation loss" : "Loaded checkpoint with validation loss", "\(validationLoss).")
+        if isContinuation { print("AdamW starts with fresh optimizer state.") }
+    } catch { fail("Failed to load checkpoint from \(checkpointToLoad.path): \(error.localizedDescription)") }
+}
+
 let formatter = ByteCountFormatter()
 formatter.countStyle = .memory
-
 print("Trainable parameters:", model.parameterCount.formatted())
-print(
-    "Parameter storage:",
-    formatter.string(fromByteCount: Int64(model.parameterBytes))
-)
+print("Parameter storage:", formatter.string(fromByteCount: Int64(model.parameterBytes)))
 
 if options.train {
-    // Unlike ordinary prompt encoding, corpus encoding converts every visible
-    // document boundary into the transformer's dedicated EOT token.
-    let tokens = timed("Tokenising corpus") {
-        tokeniser.encodeWithSpecialMarkers(corpus)
-    }
-
+    guard let corpus else { fail("--corpus is required when training") }
+    let tokens = timed("Tokenising corpus") { tokeniser.encodeWithSpecialMarkers(corpus) }
     let validationTokens: [Int]?
-
-    if let validationURL = options.validation {
-        do {
-            let validationCorpus = try String(
-                contentsOf: validationURL,
-                encoding: .utf8
-            )
-
-            validationTokens = tokeniser.encodeWithSpecialMarkers(
-                validationCorpus
-            )
-        } catch {
-            fatalError(
-                "Could not read validation corpus at "
-                    + "\(validationURL.path): \(error)"
-            )
-        }
+    if let validation = resolved.data.validation {
+        do { validationTokens = tokeniser.encodeWithSpecialMarkers(try String(contentsOf: URL(fileURLWithPath: validation), encoding: .utf8)) }
+        catch { fail("Could not read validation corpus at \(validation): \(error.localizedDescription)") }
     } else {
-        // This fallback is useful for a single unprepared corpus. Supplying a
-        // validation path always takes precedence and read failures stop the run.
-        print(
-            "Warning: no validation corpus supplied; "
-                + "using the final 10% of the training corpus."
-        )
+        print("Warning: no validation corpus supplied; using the final 10% of the training corpus.")
         validationTokens = nil
     }
-
     do {
         try timed("Training") {
-            try train(
-                model: model,
-                on: tokens,
-                validatedWith: validationTokens,
-                tokeniser: tokeniser,
-                contextLength: contextLength,
-                batchSize: batchSize,
-                epochs: epochCount,
-                evalCadence: 100,
-                evaluationText: "To be or ",
-                checkpointURL: checkpointURL,
-                isContinuation: options.resume
-            )
+            try train(model: model, on: tokens, validatedWith: validationTokens, tokeniser: tokeniser,
+                      contextLength: resolved.model.contextLength, batchSize: resolved.training.batchSize,
+                      epochs: resolved.training.epochs, evalCadence: resolved.training.evalCadence,
+                      evaluationText: "To be or ", patience: resolved.training.patience,
+                      checkpointURL: checkpointURL, isContinuation: isContinuation,
+                      learningRate: resolved.training.learningRate, configuration: resolved)
         }
-    } catch {
-        fatalError(
-            "Training failed while saving \(checkpointURL.path): \(error)"
-        )
-    }
+    } catch { fail("Training failed while saving \(checkpointURL.path): \(error.localizedDescription)") }
 }
 
-// Generation needs one input sequence, but no random batch or shifted targets.
-// Temperature and top-k trade deterministic choices for controlled variety.
 let answer = timed("Generation") {
-    generate(
-        after: options.question,
-        newTokenCount: contextLength,
-        using: model,
-        tokeniser: tokeniser,
-        contextLength: contextLength,
-        temperature: 0.7,
-        topK: 40
-    )
+    generate(after: options.question, newTokenCount: resolved.generation.newTokenCount,
+             using: model, tokeniser: tokeniser, contextLength: resolved.model.contextLength,
+             temperature: resolved.generation.temperature, topK: resolved.generation.topK,
+             topP: resolved.generation.topP,
+             repetitionPenalty: resolved.generation.repetitionPenalty ?? 1)
 }
-
 print("Answer:\n\(answer)\nDone.")
